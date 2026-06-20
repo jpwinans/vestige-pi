@@ -34,6 +34,13 @@
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
 - Never commit unless the user asks.
 
+## Fork / env notes
+
+This repo is a fork of `earendil-works/pi-mono` (`upstream` remote, push-disabled); the fork point is recoverable via `git merge-base main upstream/main`. Two environment gotchas:
+
+- `packages/coding-agent/test/session-id-readonly.test.ts` "rejects an existing fork target session id" resolves a model before the fork-target check, so it only passes once a default model resolves. It passes in clean Linux CI but fails on a configured macOS box, and under `./test.sh` (which strips API keys and moves `~/.pi/agent/auth.json`) fails on "No API key found". Not a defect; do not patch.
+- `npm install` on macOS strips Linux `libc` (glibc/musl) fields from `package-lock.json`, drifting `packages/coding-agent/npm-shrinkwrap.json` and failing `check:shrinkwrap` locally. Cosmetic (only `libc` fields change); does not occur on Linux CI. Don't commit the macOS lockfile churn.
+
 ## Dependency and Install Security
 
 - Treat npm dep and lockfile changes as reviewed code. Direct external deps stay pinned to exact versions.
