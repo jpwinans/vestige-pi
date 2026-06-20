@@ -75,4 +75,25 @@ describe("callRole", () => {
 			}),
 		).rejects.toBeInstanceOf(RoleOutputError);
 	});
+
+	it("prompt-json mode parses a JSON object from the text (no tools)", async () => {
+		const reg = faux();
+		reg.setResponses([fauxAssistantMessage('here you go: {"answer":"json-mode"}')]);
+		const result = await callRole(reg.getModel(), { messages: [userMessage] }, Schema, "emit", "desc", {
+			apiKey: "local",
+			structuredVia: "prompt-json",
+		});
+		expect(result.answer).toBe("json-mode");
+	});
+
+	it("prompt-json mode reprompts on invalid output then succeeds", async () => {
+		const reg = faux();
+		reg.setResponses([fauxAssistantMessage("no json here"), fauxAssistantMessage('{"answer":"fixed"}')]);
+		const result = await callRole(reg.getModel(), { messages: [userMessage] }, Schema, "emit", "desc", {
+			apiKey: "local",
+			structuredVia: "prompt-json",
+			maxReprompts: 2,
+		});
+		expect(result.answer).toBe("fixed");
+	});
 });

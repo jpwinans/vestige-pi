@@ -56,15 +56,17 @@ export function defaultConfig(repoRoot: string, overrides: PipelineConfigOverrid
 			id: overrides.qwen?.id ?? "Qwen3-Coder-Next",
 			baseUrl: overrides.qwen?.baseUrl ?? "http://localhost:8081/v1",
 			apiKey: overrides.qwen?.apiKey ?? "local",
-			contextWindow: overrides.qwen?.contextWindow ?? 262144,
-			maxTokens: overrides.qwen?.maxTokens ?? 16384,
+			// Runtime n_ctx on the local server is ~24576; keep the window and the
+			// per-turn output cap comfortably inside it.
+			contextWindow: overrides.qwen?.contextWindow ?? 24576,
+			maxTokens: overrides.qwen?.maxTokens ?? 8192,
 		},
 		gemma: {
 			id: overrides.gemma?.id ?? "gemma-4-26B-A4B-it",
 			baseUrl: overrides.gemma?.baseUrl ?? "http://localhost:8080/v1",
 			apiKey: overrides.gemma?.apiKey ?? "local",
 			contextWindow: overrides.gemma?.contextWindow ?? 131072,
-			maxTokens: overrides.gemma?.maxTokens ?? 8192,
+			maxTokens: overrides.gemma?.maxTokens ?? 4096,
 		},
 		caps: {
 			gateA: overrides.caps?.gateA ?? 4,

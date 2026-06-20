@@ -5,7 +5,7 @@
  */
 
 import { Agent, type BeforeToolCallContext, type BeforeToolCallResult } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type Model, streamSimple } from "@earendil-works/pi-ai";
 import { createCodingTools } from "@earendil-works/pi-coding-agent";
 
 const IMPLEMENTER_SYSTEM = [
@@ -21,6 +21,8 @@ export interface ImplementerDeps {
 	beforeToolCall: (ctx: BeforeToolCallContext) => Promise<BeforeToolCallResult | undefined>;
 	onMessage?: (message: AssistantMessage) => void;
 	signal?: AbortSignal;
+	/** Near-deterministic by default for reproducible edits. */
+	temperature?: number;
 }
 
 export interface ImplementResult {
@@ -34,10 +36,17 @@ export async function runImplementer(
 	deps: ImplementerDeps,
 ): Promise<ImplementResult> {
 	const tools = createCodingTools(worktree);
+	const temperature = deps.temperature ?? 0.2;
+	// The Agent never forwards model.maxTokens to the wire (createLoopConfig omits
+	// it; the provider drops a falsy max_tokens), so a single runaway turn is
+	// unbounded and can OOM the process. Wrap streamSimple to ALWAYS inject a
+	// finite per-turn cap (and a low temperature for reproducible edits).
 	const agent = new Agent({
 		initialState: { systemPrompt: IMPLEMENTER_SYSTEM, model, thinkingLevel: "off", tools },
 		getApiKey: () => deps.apiKey,
 		beforeToolCall: deps.beforeToolCall,
+		streamFn: (turnModel, context, options) =>
+			streamSimple(turnModel, context, { ...options, maxTokens: turnModel.maxTokens, temperature }),
 	});
 
 	// The Agent class exposes no turn cap, so cap by counting turns and aborting.

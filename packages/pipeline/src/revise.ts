@@ -40,7 +40,9 @@ export async function classifyFindings(
 		"- defer: out of scope for this change; it will be tracked separately.",
 		"",
 		"Findings:",
-		...findings.map((finding) => `- ${finding.id} [${finding.severity}] (${finding.rubricRef}): ${finding.issue}`),
+		...findings.map(
+			(finding) => `- ${finding.id} [${finding.severity ?? "?"}] (${finding.rubricRef}): ${finding.issue}`,
+		),
 		"",
 		"Call emit_decisions with exactly one decision per finding id.",
 	].join("\n");
@@ -51,7 +53,7 @@ export async function classifyFindings(
 		ReviseSchema,
 		"emit_decisions",
 		"Classify each finding as fix, defend, or defer with a rationale.",
-		{ apiKey, signal, onMessage },
+		{ apiKey, signal, onMessage, temperature: 0 },
 	);
 
 	const byId = new Map(findings.map((finding) => [finding.id, finding]));
@@ -65,14 +67,14 @@ export async function classifyFindings(
 		const finding = byId.get(decision.findingId);
 		if (!finding || seen.has(finding.id)) continue;
 		seen.add(finding.id);
-		if (decision.action === "fix") {
-			toFix.push(finding);
-		} else if (decision.action === "defer") {
+		const action = decision.action.trim().toLowerCase();
+		if (action.startsWith("defer")) {
 			deferred.push(finding);
-		} else if (citesConstraint(decision.rationale)) {
-			defended += 1;
+		} else if (action.startsWith("defend")) {
+			if (citesConstraint(decision.rationale)) defended += 1;
+			else stillOpen.push(finding); // bare defense -> still open
 		} else {
-			stillOpen.push(finding);
+			toFix.push(finding); // "fix" or anything unrecognized -> fix
 		}
 	}
 	// Anything the model failed to classify is treated as needing a fix.
@@ -91,7 +93,7 @@ export async function writeDeferred(runDir: string, deferred: Finding[]): Promis
 		const location = finding.file ? `File: ${finding.file}${finding.line ? `:${finding.line}` : ""}` : "";
 		const body = [
 			`# Deferred finding ${finding.id}`,
-			`Severity: ${finding.severity}`,
+			`Severity: ${finding.severity ?? "unspecified"}`,
 			`Rubric: ${finding.rubricRef}`,
 			location,
 			"",

@@ -271,6 +271,17 @@ turn and to survive the forced prefix; do not rely on a custom system persona fo
 
 The entrypoint must `import '@earendil-works/pi-ai'` (not `/base`) so providers register.
 
+### Local model driving (empirical — validated against the live servers)
+
+Both local models are served by llama.cpp (build `b9700`) and **honor `max_tokens` when it is sent** — but the two models must be driven differently, and a client-side bug exposed both to OOM:
+
+- **OOM root cause (fixed).** pi-ai's openai-completions provider only emits `max_tokens` when truthy, and neither the `callRole` options nor the `pi-agent-core` Agent path (`createLoopConfig` → `buildBaseOptions`, no `model.maxTokens` fallback) ever set it — so **no length cap reached the wire**. A model that didn't stop on its own (see Gemma below) streamed unbounded output and OOM'd the Node process; `max_tokens`/`AbortSignal` couldn't help because the cap was never sent. Fix: **always send a finite `maxTokens`** — `callRole` sets it on every call, and the implementer wraps `streamFn` to inject `model.maxTokens` per turn (the Agent's turn-cap only bounds turn *count*, not tokens within a turn). This is the load-bearing safety rail for any local model.
+- **Gemma reviewer = prompt-json, not tools.** Gemma 4 has no OpenAI `tools`/`tool_choice` interface (its function calling is a native DSL applied only by its chat template). Forcing an OpenAI tool sends off-distribution content with no native stop → degenerate runaway. Worse, this build emits a verbose harmony-style reasoning channel — `<|channel>thought … <channel|>{answer}` — in the **content**, and the reasoning echoes the schema. So Gate B drives Gemma with **no tools**: a prompt-instructed single JSON object (`structuredVia: "prompt-json"`), greedy (`temperature: 0`), with a generous bounded budget (`maxTokens` ~4096 — the thought channel is long), and the JSON is extracted from **after the last `<channel|>`** (parsing the first `{…}` would grab the schema echo inside the reasoning). `verdict` is a free string normalized fail-closed; `findings` are flat (no literal-union enums) for local-model reliability.
+- **Qwen implementer = native OpenAI tool_calls.** Qwen3-Coder-Next on `:8081` returns proper streaming `tool_calls` out of the box (server-side Qwen tool template) and emits no reasoning/thinking tokens — so `createCodingTools` over real tool calls works unchanged; it needs only the per-turn `maxTokens` cap (above) and a low `temperature` for reproducible edits.
+- **Context window.** Runtime `n_ctx` on the Qwen server is ~24576 (far below the model's trained context); `config.qwen.contextWindow` is set to match so context-budget math stays inside the real KV window.
+- **Server-side recommendations (operator):** launch llama.cpp with `--jinja` (applies the model's chat template / correct EOS, suppresses Gemma ghost-thought spill) and keep the Qwen tool parser enabled; pin sampling there (pi-ai forwards only `temperature`/`maxTokens`, not `top_k`/`repetition_penalty`).
+- **Upstream hardening (noted, not done here):** making `buildBaseOptions` fall back to `model.maxTokens` in pi-ai would close the missing-cap hole globally for all `streamSimple` callers; the pipeline doesn't depend on it because every pipeline model call now sends its own cap.
+
 ## 7. Structured output (`callRole`)
 
 `callRole<T>(model, context, schema, toolName, options) => validated T`. It passes

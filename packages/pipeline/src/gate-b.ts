@@ -1,8 +1,10 @@
 /**
  * Gate B — the reviewer (Gemma). Reviews ONLY the non-testable layer against the
- * rubric, emitting structured findings via a forced tool call. Anti-rubber-stamp:
- * a first-pass approve with zero findings on a substantive diff is re-prompted
- * once to name a concern or justify zero.
+ * rubric. Gemma 4 has no OpenAI tool-calling interface, so structured output is
+ * obtained via the prompt-json path (no tools), greedy, with a bounded token cap.
+ * The verdict is normalized fail-closed (anything but "approve" => request_changes).
+ * Anti-rubber-stamp: a first-pass approve with zero findings on a substantive diff
+ * is re-prompted once to name a concern or justify zero.
  */
 
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
@@ -16,7 +18,18 @@ const REVIEWER_SYSTEM = [
 	"Default to finding concerns; a genuinely clean diff is rare. Tie every finding to a rubric criterion.",
 ].join("\n");
 
-const REVIEW_TOOL_DESCRIPTION = "Return the structured review verdict and findings.";
+const REVIEW_DESCRIPTION = "the code review verdict and findings";
+
+export interface GateBOptions {
+	apiKey: string;
+	signal?: AbortSignal;
+	onMessage?: (message: AssistantMessage) => void;
+	/**
+	 * Output token cap for the review. Default 4096 — Gemma emits a verbose
+	 * reasoning channel before the JSON answer, so the budget must cover both.
+	 */
+	maxTokens?: number;
+}
 
 export interface GateBResult {
 	verdict: "approve" | "request_changes";
@@ -37,29 +50,42 @@ function buildReviewPrompt(plan: Plan, diff: string): string {
 		diff,
 		"```",
 		"",
-		"Review the non-testable layer only, then call emit_review with your verdict and findings.",
+		'Review the non-testable layer only. Give a verdict ("approve" or "request_changes") and a list of findings, each tied to a rubric criterion.',
 	].join("\n");
+}
+
+function normalizeVerdict(verdict: string): "approve" | "request_changes" {
+	// Fail-closed: only an explicit "approve" approves.
+	return verdict.trim().toLowerCase() === "approve" ? "approve" : "request_changes";
 }
 
 export async function runGateB(
 	model: Model<"openai-completions">,
 	plan: Plan,
 	diff: string,
-	apiKey: string,
-	signal?: AbortSignal,
-	onMessage?: (message: AssistantMessage) => void,
+	opts: GateBOptions,
 ): Promise<GateBResult> {
 	const userPrompt = buildReviewPrompt(plan, diff);
+	const callOpts = {
+		apiKey: opts.apiKey,
+		signal: opts.signal,
+		onMessage: opts.onMessage,
+		structuredVia: "prompt-json" as const,
+		temperature: 0,
+		maxTokens: opts.maxTokens ?? 4096,
+	};
+
 	let review = await callRole(
 		model,
 		{ systemPrompt: REVIEWER_SYSTEM, messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }] },
 		ReviewSchema,
-		"emit_review",
-		REVIEW_TOOL_DESCRIPTION,
-		{ apiKey, signal, onMessage },
+		"review",
+		REVIEW_DESCRIPTION,
+		callOpts,
 	);
+	let verdict = normalizeVerdict(review.verdict);
 
-	if (review.verdict === "approve" && review.findings.length === 0 && diff.trim().length > 0) {
+	if (verdict === "approve" && review.findings.length === 0 && diff.trim().length > 0) {
 		review = await callRole(
 			model,
 			{
@@ -69,18 +95,19 @@ export async function runGateB(
 					{
 						role: "user",
 						content:
-							"You approved with zero findings. Name at least one concrete concern tied to a rubric criterion, or explicitly justify why each rubric criterion is satisfied, then call emit_review again.",
+							"You approved with zero findings. Name at least one concrete concern tied to a rubric criterion, or explicitly justify why each rubric criterion is satisfied, then give your review again.",
 						timestamp: Date.now(),
 					},
 				],
 			},
 			ReviewSchema,
-			"emit_review",
-			REVIEW_TOOL_DESCRIPTION,
-			{ apiKey, signal, onMessage },
+			"review",
+			REVIEW_DESCRIPTION,
+			callOpts,
 		);
+		verdict = normalizeVerdict(review.verdict);
 	}
 
 	const findings: Finding[] = review.findings.map((finding, i) => ({ ...finding, id: `f${i + 1}` }));
-	return { verdict: review.verdict, findings };
+	return { verdict, findings };
 }

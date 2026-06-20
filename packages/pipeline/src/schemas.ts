@@ -52,19 +52,29 @@ export interface Plan {
 	liveSmokeSurface?: string;
 }
 
-/** A single Gate-B review finding (reviewer output). */
+/**
+ * A single Gate-B review finding (reviewer output). Deliberately flat with only
+ * two required string fields and no literal-union enums — local models (the
+ * weakest gate) degenerate on nested/enum-heavy schemas, so structure is kept
+ * minimal for reliability. severity is an optional free string, normalized when
+ * displayed.
+ */
 export const FindingSchema = Type.Object({
-	severity: Type.Union([Type.Literal("blocker"), Type.Literal("major"), Type.Literal("minor")]),
 	rubricRef: Type.String({ description: "The rubric criterion this finding maps to" }),
+	issue: Type.String({ description: "What is wrong, specifically" }),
+	severity: Type.Optional(Type.String({ description: "blocker | major | minor" })),
 	file: Type.Optional(Type.String()),
 	line: Type.Optional(Type.Number()),
-	issue: Type.String({ description: "What is wrong, specifically" }),
 	suggestedFix: Type.Optional(Type.String()),
 });
 
-/** Gemma's structured review verdict (Gate B). */
+/**
+ * Gemma's structured review verdict (Gate B). verdict is a free string (not a
+ * literal union) for local-model reliability; it is normalized fail-closed in
+ * gate-b (anything other than "approve" becomes request_changes).
+ */
 export const ReviewSchema = Type.Object({
-	verdict: Type.Union([Type.Literal("approve"), Type.Literal("request_changes")]),
+	verdict: Type.String({ description: "approve | request_changes" }),
 	findings: Type.Array(FindingSchema),
 });
 export type Review = Static<typeof ReviewSchema>;
@@ -77,7 +87,7 @@ export const ReviseSchema = Type.Object({
 	decisions: Type.Array(
 		Type.Object({
 			findingId: Type.String(),
-			action: Type.Union([Type.Literal("fix"), Type.Literal("defend"), Type.Literal("defer")]),
+			action: Type.String({ description: "fix | defend | defer" }),
 			rationale: Type.String({ description: "For defend: cite the constraint, test, or spec clause" }),
 		}),
 	),

@@ -19,3 +19,20 @@
   CLI entrypoints over a shared `runPipeline` core.
 - The `build-plan` Claude skill for authoring the plan artifact (spec + rubric + failing
   tests) the pipeline consumes.
+- Live integration test (`test/integration.live.test.ts`) that exercises the real local
+  models (health check, structured output on both, a bounded Gate B review). Gated on
+  reachability + `PI_NO_LOCAL_LLM` so it runs on a direct `vitest` and is skipped under
+  `./test.sh`/CI.
+
+### Fixed
+
+- Unbounded local-model generation could OOM the process: `callRole`, the implementer
+  Agent (via a `streamFn` wrapper), and the health check now always send a finite
+  `max_tokens` (pi-ai drops the field when falsy, so omitting it removed the only length
+  cap), plus a per-call timeout.
+- Gate B now drives Gemma via a no-tools prompt-json path with harmony-channel-aware JSON
+  extraction (parses the answer after the last `<channel|>`), greedy sampling, and a
+  bounded budget — forcing an OpenAI tool on Gemma 4 (which has no such interface) caused
+  a degenerate runaway. Qwen keeps the native OpenAI tool-call path.
+- Role-output schemas flattened for local-model reliability: `verdict` is a free string
+  normalized fail-closed; findings carry only two required fields, no literal-union enums.

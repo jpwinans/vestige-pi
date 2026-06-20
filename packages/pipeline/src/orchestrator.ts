@@ -65,7 +65,7 @@ function buildFindingsRepairPrompt(plan: Plan, findings: Finding[]): string {
 	const list = findings
 		.map(
 			(f) =>
-				`- [${f.severity}] (${f.rubricRef})${f.file ? ` ${f.file}${f.line ? `:${f.line}` : ""}` : ""}: ${f.issue}`,
+				`- [${f.severity ?? "?"}] (${f.rubricRef})${f.file ? ` ${f.file}${f.line ? `:${f.line}` : ""}` : ""}: ${f.issue}`,
 		)
 		.join("\n");
 	return [
@@ -178,14 +178,11 @@ export async function runPipeline(
 		for (let attempt = 1; attempt <= config.caps.gateB; attempt++) {
 			await emit({ type: "phase_enter", phase: "gate_b", attempt });
 			const diff = await getDiff(worktree.path, hooks.signal);
-			const review = await runGateB(
-				models.gemma,
-				plan,
-				diff,
-				config.gemma.apiKey,
-				hooks.signal,
-				usageSink("reviewer", models.gemma.id),
-			);
+			const review = await runGateB(models.gemma, plan, diff, {
+				apiKey: config.gemma.apiKey,
+				signal: hooks.signal,
+				onMessage: usageSink("reviewer", models.gemma.id),
+			});
 			await emit({ type: "gate_b", attempt, verdict: review.verdict, findingCount: review.findings.length });
 			if (review.verdict === "approve") {
 				approved = true;
