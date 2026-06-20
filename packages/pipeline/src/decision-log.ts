@@ -1,7 +1,7 @@
 /**
- * Append-only JSONL decision log. Mirrors the JsonlSessionStorage shape (a
- * versioned header line + one validated object per line) and doubles as the
- * crash-resume/replay tape: each event is journaled before its side effect.
+ * Append-only JSONL audit log: a versioned header line followed by one JSON
+ * object per line, each event journaled before its side effect. It is the run's
+ * audit trail and the source for the rendered summary.
  */
 
 import { appendFile, mkdir, readFile } from "node:fs/promises";
@@ -63,10 +63,8 @@ export function renderSummary(slug: string, events: DecisionEvent[]): string {
 	const done = events.find((e): e is Extract<DecisionEvent, { type: "done" }> => e.type === "done");
 
 	const tokensByRole = new Map<string, number>();
-	const costByRole = new Map<string, number>();
 	for (const u of usage) {
 		tokensByRole.set(u.role, (tokensByRole.get(u.role) ?? 0) + u.tokens);
-		costByRole.set(u.role, (costByRole.get(u.role) ?? 0) + u.costUsd);
 	}
 
 	const outcome = done ? (done.smokePassed ? "DONE (live-smoke passed)" : "DONE (smoke not passed)") : "not completed";
@@ -78,10 +76,8 @@ export function renderSummary(slug: string, events: DecisionEvent[]): string {
 		`- Gate B rounds: ${gateB.length}`,
 		`- Escalations: ${escalations.length}`,
 		"",
-		"## Tokens / cost by role",
-		...[...tokensByRole.keys()].map(
-			(role) => `- ${role}: ${tokensByRole.get(role) ?? 0} tokens, $${(costByRole.get(role) ?? 0).toFixed(4)}`,
-		),
+		"## Tokens by role",
+		...[...tokensByRole.keys()].map((role) => `- ${role}: ${tokensByRole.get(role) ?? 0} tokens`),
 	];
 	return `${lines.join("\n")}\n`;
 }

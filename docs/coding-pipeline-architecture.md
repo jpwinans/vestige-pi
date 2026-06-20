@@ -67,7 +67,7 @@ A run consumes a plan directory:
 
 ```
 plans/<slug>/
-  plan.json   # { slug, goal, commands:{test, lint?, typecheck?, smoke?}, testPaths[], liveSmokeSurface? }
+  plan.json   # { slug, goal, commands: { test, lint?, typecheck?, smoke? } }
   spec.md     # the specification
   rubric.md   # review criteria, one per checklist line
   tests/      # test files, each mirrored at its real repo-relative path
@@ -84,12 +84,13 @@ the directory.
 
 ## 4. Control flow
 
-The state machine lives in `orchestrator.ts` as `runPipeline(planDir, config, hooks)`. Phases are a
-string-literal union (no `enum`, per the repo's erasable-TypeScript rule):
+The state machine lives in `orchestrator.ts` as `runPipeline(planDir, config, hooks)` — a linear
+async function with bounded `for` loops for the gates, not a model-driven dispatcher. Phases are the
+labels carried in the decision log (a string-literal union, no `enum`); `plan` is the setup stage
+before the first numbered phase, and the terminal outcome is a RunStatus, not a phase:
 
 ```ts
-type Phase = 'plan' | 'red_check' | 'implement' | 'gate_a' | 'gate_b'
-           | 'revise' | 'escalate' | 'done' | 'failed';
+type Phase = 'plan' | 'red_check' | 'implement' | 'gate_a' | 'gate_b' | 'revise' | 'escalate';
 ```
 
 A run proceeds:
@@ -129,16 +130,15 @@ type DecisionEvent =
   | { type: 'gate_a'; attempt; passed; summary }
   | { type: 'gate_b'; attempt; verdict; findingCount }
   | { type: 'revise'; fixed; defended; deferred }
-  | { type: 'escalate'; reason; humanDecision? }
-  | { type: 'checkpoint'; stashRef }
+  | { type: 'escalate'; reason }
   | { type: 'done'; smokePassed }
   | { type: 'usage'; role; model; tokens; costUsd }
   | { type: 'error'; phase; message };
 ```
 
 The log is the audit trail and the source for `summary.md` (rounds per gate, escalations, per-role
-token usage). Writing each event before its side effect also lays the groundwork for resume; the
-current entrypoint runs a fresh run each invocation.
+token usage). Each event is journaled before its side effect; the current entrypoint runs a fresh
+run each invocation (no resume).
 
 ## 5. Structured output (`call-role.ts`)
 
@@ -200,22 +200,22 @@ the tree.
 
 ## 8. Escalation
 
-There is no automated arbiter in the local pipeline, so any cap exceeded or deadlock routes straight
-to the human via `hooks.resolveHumanGate`. In the TUI that is an interactive dialog; with no UI
-(headless) the run halts. The decision is recorded in the log and the run ends rather than looping.
+There is no automated arbiter, so any cap exceeded or deadlock halts the run and notifies the
+operator via `hooks.onEscalation` (in the TUI, a dialog; absent the hook, the run simply halts). The
+escalation is recorded in the log and the run ends rather than looping.
 
 ## 9. Invocation surfaces
 
 The orchestrator core, `runPipeline(planDir, config, hooks)`, is invocation-agnostic; `hooks`
-carries an optional `onEvent` (decision-event stream), `resolveHumanGate` (escalation), and a
+carries an optional `onEvent` (decision-event stream), `onEscalation` (halt notification), and a
 `signal`. Two thin adapters share it:
 
 - **`pipeline run <plan-dir>`** (`cli.ts`) — a headless terminal run that prints decision events.
 - **`/build <plan-dir>`** (`extension.ts`) — a coding-agent slash command. It runs the pipeline
   out-of-band of the host TUI's own agent loop (the pipeline is a separate supervised process, not a
-  prompt to the current model), streaming progress to the UI and surfacing the human gate as a
-  dialog. The same command works in headless print mode, where the gate halts instead. `extension.ts`
-  is the only file coupled to the coding-agent runtime; the core and CLI are independent of it.
+  prompt to the current model), streaming progress to the UI and notifying the operator on
+  escalation. `extension.ts` is the only file coupled to the coding-agent runtime; the core and CLI
+  are independent of it.
 
 ## 10. Configuration
 
@@ -224,8 +224,8 @@ carries an optional `onEvent` (decision-event stream), `resolveHumanGate` (escal
 - **Endpoints** — Qwen `http://localhost:8081/v1` (context window 24576, per-turn cap 8192); Gemma
   `http://localhost:8080/v1` (context window 131072, review cap 4096). The windows track the servers'
   runtime context so context-budget math stays inside the real limit.
-- **Caps** — Gate A 4, Gate B 3, revise 3. These are starting values, intended to be tuned from
-  decision-log data.
+- **Caps** — Gate A 4 rounds, Gate B 3 rounds (the revise loop is bounded by the Gate B cap). These
+  are starting values, intended to be tuned from decision-log data.
 - **Sandbox** — `none`: the disposable worktree plus the canonicalizing path gate. An optional `os`
   mode wraps bash in an OS sandbox (darwin/linux) and, if used, makes the sandbox runtime a real
   dependency of this package.

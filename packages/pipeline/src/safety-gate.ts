@@ -11,8 +11,10 @@
 import type { BeforeToolCallContext, BeforeToolCallResult } from "@earendil-works/pi-agent-core";
 import { canonicalizePath, getCwdRelativePath, resolvePath } from "./vendor/paths.ts";
 
-const ALLOWED_TOOLS = new Set(["read", "edit", "write", "multiedit", "bash", "ls", "grep", "find"]);
-const PATH_TOOLS = new Set(["read", "edit", "write", "multiedit", "ls"]);
+// The implementer's toolset is exactly createCodingTools = read/bash/edit/write.
+// Anything else is default-denied; the path-bearing tools are read/edit/write.
+const ALLOWED_TOOLS = new Set(["read", "bash", "edit", "write"]);
+const PATH_TOOLS = new Set(["read", "edit", "write"]);
 const PATH_ARG_KEYS = ["path", "file", "filePath", "file_path"];
 
 export interface GateDecision {
@@ -46,14 +48,11 @@ export function checkToolCall(toolName: string, input: Record<string, unknown>, 
 	return { block: false };
 }
 
-export type SafetyAudit = (toolName: string, decision: GateDecision) => void;
-
 /** Adapt the policy to the Agent's beforeToolCall hook. */
-export function makeSafetyGate(worktree: string, audit?: SafetyAudit) {
+export function makeSafetyGate(worktree: string) {
 	return async (ctx: BeforeToolCallContext): Promise<BeforeToolCallResult | undefined> => {
 		const input = (ctx.args ?? {}) as Record<string, unknown>;
 		const decision = checkToolCall(ctx.toolCall.name, input, worktree);
-		audit?.(ctx.toolCall.name, decision);
 		return decision.block ? { block: true, reason: decision.reason } : undefined;
 	};
 }

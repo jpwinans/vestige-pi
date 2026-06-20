@@ -65,13 +65,5 @@ export async function loadPlan(dir: string): Promise<Plan> {
 	const tests = await collectTests(join(dir, "tests"));
 	if (tests.length === 0) throw new Error(`Plan has no tests under ${join(dir, "tests")}`);
 	if (rubric.length === 0) throw new Error(`Plan rubric (${join(dir, "rubric.md")}) has no criteria`);
-	return {
-		slug: manifest.slug,
-		goal: manifest.goal,
-		spec,
-		rubric,
-		tests,
-		commands: manifest.commands,
-		liveSmokeSurface: manifest.liveSmokeSurface,
-	};
+	return { slug: manifest.slug, goal: manifest.goal, spec, rubric, tests, commands: manifest.commands };
 }

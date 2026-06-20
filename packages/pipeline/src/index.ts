@@ -5,7 +5,7 @@
  * (via the orchestrator's model imports) before any model call.
  */
 
-export { type CallRoleOptions, callRole, RoleOutputError } from "./call-role.ts";
+export { type CallRoleOptions, callRole, RoleOutputError, type StructuredVia } from "./call-role.ts";
 export {
 	defaultConfig,
 	type ModelEndpoint,
@@ -28,4 +28,4 @@ export type {
 	PlanTest,
 	Review,
 } from "./schemas.ts";
-export type { EscalationContext, HumanDecision, PipelineHooks, RunResult, RunStatus } from "./types.ts";
+export type { EscalationContext, PipelineHooks, RunResult, RunStatus } from "./types.ts";

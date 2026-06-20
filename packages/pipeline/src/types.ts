@@ -5,8 +5,6 @@
 
 import type { DecisionEvent, Finding } from "./schemas.ts";
 
-export type HumanDecision = "retry" | "abort";
-
 export interface EscalationContext {
 	reason: string;
 	planSlug: string;
@@ -18,10 +16,10 @@ export interface PipelineHooks {
 	/** Stream decision events to a UI (TUI progress component / CLI logger). */
 	onEvent?: (event: DecisionEvent) => void;
 	/**
-	 * Resolve a needs-human escalation. In the TUI this is a select dialog; when
-	 * absent (headless), the run halts (abort).
+	 * Notify the operator that the run has escalated (a cap or deadlock). Phase 1
+	 * escalation always halts the run; this hook surfaces why (e.g. a TUI dialog).
 	 */
-	resolveHumanGate?: (ctx: EscalationContext) => Promise<HumanDecision>;
+	onEscalation?: (ctx: EscalationContext) => void | Promise<void>;
 	/** Abort the whole run. */
 	signal?: AbortSignal;
 }

@@ -24,7 +24,7 @@ function formatEvent(event: DecisionEvent): string {
 		case "revise":
 			return `   revise: ${event.fixed} fix / ${event.defended} defend / ${event.deferred} defer`;
 		case "escalate":
-			return `   escalate: ${event.reason} -> ${event.humanDecision ?? "halt"}`;
+			return `   escalate (halting): ${event.reason}`;
 		case "done":
 			return `   done: smoke ${event.smokePassed ? "passed" : "not passed"}`;
 		case "error":

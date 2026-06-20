@@ -1,7 +1,7 @@
 /**
  * Coding-agent extension: registers the /build slash command. Thin adapter that
- * runs the local pipeline out-of-band of the active agent loop and surfaces a
- * needs-human escalation as an interactive dialog. The ONLY coding-agent-coupled
+ * runs the local pipeline out-of-band of the active agent loop and surfaces an
+ * escalation (which halts the run) to the operator. The ONLY coding-agent-coupled
  * file in this package.
  */
 
@@ -11,7 +11,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { defaultConfig } from "./config.ts";
 import { runPipeline } from "./orchestrator.ts";
 import type { DecisionEvent } from "./schemas.ts";
-import type { EscalationContext, HumanDecision } from "./types.ts";
+import type { EscalationContext } from "./types.ts";
 
 function summarize(event: DecisionEvent): string {
 	switch (event.type) {
@@ -37,17 +37,15 @@ export default function buildExtension(pi: ExtensionAPI): void {
 			}
 			const planDir = resolve(ctx.cwd, planArg);
 			const config = defaultConfig(ctx.cwd);
-			const resolveHumanGate = async (escalation: EscalationContext): Promise<HumanDecision> => {
-				if (!ctx.hasUI) return "abort";
-				const choice = await ctx.ui.select(`Pipeline escalation: ${escalation.summary}`, ["Abort", "Retry"]);
-				return choice === "Retry" ? "retry" : "abort";
+			const onEscalation = (escalation: EscalationContext): void => {
+				ctx.ui.notify(`/build escalated and halted: ${escalation.summary}`, "error");
 			};
 
 			ctx.ui.setStatus("pipeline", "running /build...");
 			try {
 				const result = await runPipeline(planDir, config, {
 					signal: ctx.signal,
-					resolveHumanGate,
+					onEscalation,
 					onEvent: (event) => ctx.ui.setStatus("pipeline", summarize(event)),
 				});
 				ctx.ui.notify(

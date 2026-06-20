@@ -47,11 +47,6 @@ export async function removeWorktree(repoRoot: string, worktree: Worktree, signa
 	await git(["branch", "-D", worktree.branch], repoRoot, signal);
 }
 
-export async function headSha(worktreePath: string, signal?: AbortSignal): Promise<string> {
-	const result = await git(["rev-parse", "HEAD"], worktreePath, signal);
-	return result.stdout.trim();
-}
-
 /** Full diff of the worktree vs its base commit, including new files. */
 export async function getDiff(worktreePath: string, signal?: AbortSignal): Promise<string> {
 	await git(["add", "-A"], worktreePath, signal);

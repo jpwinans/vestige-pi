@@ -12,7 +12,6 @@ function writePlanDir(): string {
 			slug: "demo",
 			goal: "do x",
 			commands: { test: "exit 1" },
-			testPaths: ["packages/x/test/a.test.ts"],
 		}),
 	);
 	writeFileSync(join(dir, "spec.md"), "# Spec\nbuild x");

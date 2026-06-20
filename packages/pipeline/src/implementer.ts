@@ -1,7 +1,10 @@
 /**
  * Stage 1 — the implementer (Qwen) as one pi-agent-core Agent loop confined to
- * the worktree by the SafetyGate beforeToolCall hook. Turn-capped via
- * shouldStopAfterTurn so a runaway local model can't loop forever.
+ * the worktree by the SafetyGate beforeToolCall hook. Per-turn output is bounded
+ * by a streamFn that injects maxTokens, and the number of turns is capped by
+ * subscribing to turn_end and calling agent.abort() at maxTurns (the Agent has no
+ * built-in turn cap), so a runaway local model can neither loop nor stream without
+ * limit.
  */
 
 import { Agent, type BeforeToolCallContext, type BeforeToolCallResult } from "@earendil-works/pi-agent-core";

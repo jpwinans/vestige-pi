@@ -6,15 +6,15 @@
  *   OpenAI-native local models (e.g. Qwen).
  * - "prompt-json": no tools at all — ask for a single JSON object in the text and
  *   parse it. Right for models with their OWN function-calling format (e.g.
- *   Gemma 4), where forcing an OpenAI tool sends off-distribution content the
- *   model has no native stop for and triggers a runaway generation.
+ *   Gemma), where forcing an OpenAI tool sends off-distribution content the model
+ *   has no native stop for and triggers a runaway generation.
  *
  * Two hard safety rails apply to every call: a finite `maxTokens` is ALWAYS sent
  * (pi-ai's provider drops the field when falsy, so omitting it removes the only
  * length cap and a degenerate local model OOMs the process), and a per-call
- * timeout aborts a hung stream. The single fragile cast (toolChoice rides on
- * OpenAICompletionsOptions, not the SimpleStreamOptions completeSimple types) is
- * localized here.
+ * timeout aborts a hung stream. toolChoice is carried on the options object even
+ * though completeSimple's SimpleStreamOptions type does not list it (the
+ * openai-completions provider reads it at runtime); that is localized here.
  */
 
 import {
@@ -65,10 +65,7 @@ export interface CallRoleOptions {
 
 type ToolChoice = NonNullable<OpenAICompletionsOptions["toolChoice"]>;
 
-function forcedToolChoice(model: Model<string>, toolName: string): ToolChoice {
-	if (model.api === "anthropic-messages") {
-		return { type: "tool", name: toolName } as unknown as ToolChoice;
-	}
+function forcedToolChoice(toolName: string): ToolChoice {
 	return { type: "function", function: { name: toolName } };
 }
 
@@ -199,7 +196,7 @@ export async function callRole<S extends TSchema>(
 	for (let attempt = 0; attempt <= maxReprompts; attempt++) {
 		const message = await runComplete(
 			{ systemPrompt: context.systemPrompt, messages, tools: [tool] },
-			forcedToolChoice(model, toolName),
+			forcedToolChoice(toolName),
 		);
 		opts.onMessage?.(message);
 		ensureOk(message);

@@ -1,14 +1,11 @@
 /**
- * Escalation. Phase 1 has no Opus arbiter, so the ladder collapses to the human
- * gate: a cap or deadlock goes straight to the operator. In the TUI that is an
- * interactive dialog (hooks.resolveHumanGate); headless, the run halts (abort).
+ * Escalation. There is no automated arbiter in this pipeline, so a cap or
+ * deadlock halts the run and notifies the operator (in the TUI, a dialog; when no
+ * notification hook is supplied, the run simply halts).
  */
 
-import type { EscalationContext, HumanDecision, PipelineHooks } from "./types.ts";
+import type { EscalationContext, PipelineHooks } from "./types.ts";
 
-export async function resolveEscalation(ctx: EscalationContext, hooks: PipelineHooks): Promise<HumanDecision> {
-	if (hooks.resolveHumanGate) {
-		return hooks.resolveHumanGate(ctx);
-	}
-	return "abort";
+export async function notifyEscalation(ctx: EscalationContext, hooks: PipelineHooks): Promise<void> {
+	await hooks.onEscalation?.(ctx);
 }

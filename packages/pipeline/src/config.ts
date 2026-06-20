@@ -1,6 +1,6 @@
 /**
- * Pipeline configuration. Phase 1 is local-only: two OpenAI-compatible endpoints
- * (Qwen implementer, Gemma reviewer) and no Anthropic leg.
+ * Pipeline configuration. Local-only: two OpenAI-compatible endpoints
+ * (Qwen implementer, Gemma reviewer).
  */
 
 import { join } from "node:path";
@@ -16,9 +16,10 @@ export interface ModelEndpoint {
 }
 
 export interface PipelineCaps {
+	/** Max implement→test rounds in Gate A. */
 	gateA: number;
+	/** Max review→revise rounds in Gate B. */
 	gateB: number;
-	revise: number;
 }
 
 export interface PipelineConfig {
@@ -71,7 +72,6 @@ export function defaultConfig(repoRoot: string, overrides: PipelineConfigOverrid
 		caps: {
 			gateA: overrides.caps?.gateA ?? 4,
 			gateB: overrides.caps?.gateB ?? 3,
-			revise: overrides.caps?.revise ?? 3,
 		},
 		sandbox: overrides.sandbox ?? "none",
 		implementerMaxTurns: overrides.implementerMaxTurns ?? 30,

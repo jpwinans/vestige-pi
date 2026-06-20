@@ -1,6 +1,6 @@
 /**
  * Gate B — the reviewer (Gemma). Reviews ONLY the non-testable layer against the
- * rubric. Gemma 4 has no OpenAI tool-calling interface, so structured output is
+ * rubric. Gemma has no OpenAI tool-calling interface, so structured output is
  * obtained via the prompt-json path (no tools), greedy, with a bounded token cap.
  * The verdict is normalized fail-closed (anything but "approve" => request_changes).
  * Anti-rubber-stamp: a first-pass approve with zero findings on a substantive diff

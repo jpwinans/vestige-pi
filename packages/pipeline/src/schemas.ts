@@ -2,23 +2,19 @@
  * Shared types and TypeBox schemas for the pipeline.
  *
  * Erasable-TypeScript only: phases and decision events are string-literal /
- * discriminated unions (no `enum`). Role outputs are TypeBox schemas because the
- * only structured-output mechanism in pi-ai is a forced tool call validated
- * against a schema (there is no `response_format`).
+ * discriminated unions (no `enum`). Role outputs are TypeBox schemas validated
+ * against either a forced tool call (OpenAI-native models like Qwen) or a JSON
+ * object parsed from text (Gemma, prompt-json); pi-ai has no `response_format`.
  */
 
 import { type Static, Type } from "@earendil-works/pi-ai";
 
-export type Phase =
-	| "plan"
-	| "red_check"
-	| "implement"
-	| "gate_a"
-	| "gate_b"
-	| "revise"
-	| "escalate"
-	| "done"
-	| "failed";
+/**
+ * The phase labels carried in the decision log. `plan` is the setup stage (load,
+ * health check, worktree creation) before implementation begins; the others are
+ * the loop stages. The terminal outcome is carried by RunStatus, not a phase.
+ */
+export type Phase = "plan" | "red_check" | "implement" | "gate_a" | "gate_b" | "revise" | "escalate";
 
 /** Machine-readable plan manifest (`plan.json`). */
 export const PlanManifestSchema = Type.Object({
@@ -30,8 +26,6 @@ export const PlanManifestSchema = Type.Object({
 		typecheck: Type.Optional(Type.String()),
 		smoke: Type.Optional(Type.String()),
 	}),
-	testPaths: Type.Array(Type.String()),
-	liveSmokeSurface: Type.Optional(Type.String()),
 });
 export type PlanManifest = Static<typeof PlanManifestSchema>;
 
@@ -49,7 +43,6 @@ export interface Plan {
 	rubric: string[];
 	tests: PlanTest[];
 	commands: PlanManifest["commands"];
-	liveSmokeSurface?: string;
 }
 
 /**
@@ -94,7 +87,7 @@ export const ReviseSchema = Type.Object({
 });
 export type ReviseDecisions = Static<typeof ReviseSchema>;
 
-/** Append-only decision-log event (also the crash-resume replay tape). */
+/** Append-only decision-log event, journaled before its side effect. */
 export type DecisionEvent =
 	| { type: "run_start"; runId: string; planSlug: string }
 	| { type: "phase_enter"; phase: Phase; attempt: number }
@@ -103,8 +96,7 @@ export type DecisionEvent =
 	| { type: "gate_a"; attempt: number; passed: boolean; summary: string }
 	| { type: "gate_b"; attempt: number; verdict: string; findingCount: number }
 	| { type: "revise"; fixed: number; defended: number; deferred: number }
-	| { type: "escalate"; reason: string; humanDecision?: string }
-	| { type: "checkpoint"; stashRef: string }
+	| { type: "escalate"; reason: string }
 	| { type: "done"; smokePassed: boolean }
 	| { type: "usage"; role: string; model: string; tokens: number; costUsd: number }
 	| { type: "error"; phase: Phase; message: string };

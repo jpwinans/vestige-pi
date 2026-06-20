@@ -2,8 +2,9 @@
  * Live integration test against the local model servers (Qwen :8081, Gemma :8080).
  *
  * This is the layer the faux unit tests cannot cover: whether the LOCAL models
- * reliably emit valid forced-tool structured output (the named #1 risk) and that
- * the real provider/compat wiring works end to end.
+ * reliably emit valid structured output (Qwen via a forced tool, Gemma via
+ * prompt-json — the named #1 risk) and that the real provider/compat wiring works
+ * end to end.
  *
  * Gating follows the repo's local-LLM convention: it runs on a direct `vitest`
  * when both endpoints are reachable, and is skipped under `./test.sh` (which sets
