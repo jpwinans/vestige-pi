@@ -1,10 +1,15 @@
 /**
- * Role model construction + startup health-check. Phase 1: two local
- * OpenAI-compatible models only (Qwen implementer, Gemma reviewer).
+ * Role model construction + startup health-check. Phase 1 uses two local models,
+ * both reached over the OpenAI-compatible /v1 transport (`api: "openai-completions"`).
+ *
+ * "OpenAI-compatible" here is about the HTTP transport only — NOT feature parity.
+ * Qwen (implementer) supports native OpenAI tool calling; Gemma (reviewer) does
+ * NOT (forcing a tool makes it run away), so Gate B drives Gemma via a plain chat
+ * completion with JSON in the text rather than tools.
  *
  * Local models need an explicit `compat` block — localhost auto-detects to the
  * plain-OpenAI profile, which sends fields (max_completion_tokens, store,
- * tools[].strict) that llama.cpp/vLLM may reject. They also require a non-empty
+ * tools[].strict) that llama.cpp may reject. They also require a non-empty
  * apiKey (the provider hard-throws without one) and get no env-key fallback.
  */
 
