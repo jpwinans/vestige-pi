@@ -16,9 +16,28 @@ const REVIEWER_SYSTEM = [
 	"spec conformance, design, edge cases the tests miss, readability, and safety.",
 	"The automated tests and type/lint checks already passed — do not re-verify those.",
 	"Default to finding concerns; a genuinely clean diff is rare. Tie every finding to a rubric criterion.",
+	"",
+	"Set each finding's severity to EXACTLY one of:",
+	"- blocker: violates the spec/rubric, is unsafe, or is wrong — must be fixed before merge.",
+	"- major: a real defect or significant gap — should be fixed before merge.",
+	"- minor: style, naming, a nit, or optional polish — does NOT block merge.",
+	"Only blocker and major findings block acceptance; reserve them for genuine problems, not nitpicks.",
 ].join("\n");
 
 const REVIEW_DESCRIPTION = "the code review verdict and findings";
+
+/** Severities that block Gate B acceptance (case-insensitive; synonyms included). */
+const BLOCKING_SEVERITIES = new Set(["blocker", "critical", "major", "high"]);
+
+/** A finding blocks acceptance only when its severity is blocker/major (or a synonym). */
+export function isBlockingSeverity(severity: string | undefined): boolean {
+	return severity !== undefined && BLOCKING_SEVERITIES.has(severity.trim().toLowerCase());
+}
+
+/** Whether any finding is severe enough to block Gate B (drives the severity-based gate). */
+export function hasBlockingFindings(findings: Finding[]): boolean {
+	return findings.some((finding) => isBlockingSeverity(finding.severity));
+}
 
 export interface GateBOptions {
 	apiKey: string;

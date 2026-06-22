@@ -85,14 +85,15 @@ export async function classifyFindings(
 	return { toFix, stillOpen, deferred, defended };
 }
 
-export async function writeDeferred(runDir: string, deferred: Finding[]): Promise<void> {
-	if (deferred.length === 0) return;
-	const dir = join(runDir, "findings", "deferred");
+/** Persist findings to findings/<kind>/<id>.md as operator artifacts. */
+async function writeFindings(runDir: string, kind: string, label: string, findings: Finding[]): Promise<void> {
+	if (findings.length === 0) return;
+	const dir = join(runDir, "findings", kind);
 	await mkdir(dir, { recursive: true });
-	for (const finding of deferred) {
+	for (const finding of findings) {
 		const location = finding.file ? `File: ${finding.file}${finding.line ? `:${finding.line}` : ""}` : "";
 		const body = [
-			`# Deferred finding ${finding.id}`,
+			`# ${label} finding ${finding.id}`,
 			`Severity: ${finding.severity ?? "unspecified"}`,
 			`Rubric: ${finding.rubricRef}`,
 			location,
@@ -104,4 +105,14 @@ export async function writeDeferred(runDir: string, deferred: Finding[]): Promis
 			.join("\n");
 		await writeFile(join(dir, `${finding.id}.md`), `${body}\n`, "utf-8");
 	}
+}
+
+/** Findings the implementer punted as out of scope. */
+export function writeDeferred(runDir: string, deferred: Finding[]): Promise<void> {
+	return writeFindings(runDir, "deferred", "Deferred", deferred);
+}
+
+/** Non-blocking (minor) findings accepted when Gate B passed on severity. */
+export function writeAccepted(runDir: string, accepted: Finding[]): Promise<void> {
+	return writeFindings(runDir, "accepted", "Accepted (non-blocking)", accepted);
 }

@@ -84,9 +84,20 @@ function firstJsonObject(text: string): unknown {
 	const start = text.indexOf("{");
 	if (start === -1) return undefined;
 	let depth = 0;
+	let inString = false;
+	let escaped = false;
 	for (let i = start; i < text.length; i++) {
 		const ch = text[i];
-		if (ch === "{") depth++;
+		// Skip braces inside string literals (review findings carry code with `{`/`}`);
+		// a brace-only scanner mis-closes on a lone `}` in a string value.
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (ch === "\\") escaped = true;
+			else if (ch === '"') inString = false;
+			continue;
+		}
+		if (ch === '"') inString = true;
+		else if (ch === "{") depth++;
 		else if (ch === "}") {
 			depth--;
 			if (depth === 0) {
@@ -130,9 +141,24 @@ export async function callRole<S extends TSchema>(
 	const maxTokens = opts.maxTokens ?? 1024;
 	const via = opts.structuredVia ?? "tool";
 
+	// Escalate temperature on reprompt so the retry budget actually explores
+	// different outputs. At a fixed low temperature (esp. 0) a local model's
+	// reprompt attempts are near-deterministic, so a diff that fails to produce
+	// schema-valid output once fails all attempts. The first attempt stays at the
+	// caller's temperature (deterministic when 0); later attempts ramp toward 1.
+	const retryTemperature = (attempt: number): number | undefined => {
+		const base = opts.temperature;
+		if (base === undefined) return attempt === 0 ? undefined : Math.min(1, attempt * 0.5);
+		return Math.min(1, base + attempt * 0.5);
+	};
+
 	// Each call gets a fresh timeout-bound signal and an ALWAYS-set maxTokens so a
 	// runaway local model is capped/aborted before it can OOM the process.
-	const runComplete = async (ctx: Context, toolChoice?: ToolChoice): Promise<AssistantMessage> => {
+	const runComplete = async (
+		ctx: Context,
+		toolChoice?: ToolChoice,
+		temperature?: number,
+	): Promise<AssistantMessage> => {
 		const controller = new AbortController();
 		const onAbort = () => controller.abort();
 		if (opts.signal) {
@@ -147,7 +173,7 @@ export async function callRole<S extends TSchema>(
 			maxTokens,
 		};
 		if (opts.reasoning) options.reasoning = opts.reasoning;
-		if (opts.temperature !== undefined) options.temperature = opts.temperature;
+		if (temperature !== undefined) options.temperature = temperature;
 		if (toolChoice) options.toolChoice = toolChoice;
 		try {
 			return await completeSimple(model, ctx, options);
@@ -157,10 +183,17 @@ export async function callRole<S extends TSchema>(
 		}
 	};
 
-	const ensureOk = (message: AssistantMessage): void => {
-		if (message.stopReason === "error" || message.stopReason === "aborted") {
-			throw new RoleOutputError(`${toolName}: model ${message.stopReason}: ${message.errorMessage ?? "unknown"}`);
+	// A failed response (error/aborted) is RETRYABLE within the attempt budget — a
+	// local server can transiently abort or hiccup, and one such failure must not
+	// kill the whole run. The exception is a caller-initiated cancellation
+	// (opts.signal aborted), which is propagated immediately. Returns true when the
+	// message failed (caller should retry); throws on real cancellation.
+	const failedRetryable = (message: AssistantMessage): boolean => {
+		if (message.stopReason !== "error" && message.stopReason !== "aborted") return false;
+		if (opts.signal?.aborted === true) {
+			throw new RoleOutputError(`${toolName}: model ${message.stopReason}: ${message.errorMessage ?? "cancelled"}`);
 		}
+		return true;
 	};
 
 	const formatErrors = (value: unknown): string =>
@@ -173,9 +206,13 @@ export async function callRole<S extends TSchema>(
 		const contract = `Respond with ONLY a single JSON object — no prose, no markdown code fence — for "${toolName}" (${description}) matching this JSON Schema:\n${JSON.stringify(schema)}`;
 		const messages: Message[] = [...context.messages, { role: "user", content: contract, timestamp: Date.now() }];
 		for (let attempt = 0; attempt <= maxReprompts; attempt++) {
-			const message = await runComplete({ systemPrompt: context.systemPrompt, messages });
+			const message = await runComplete(
+				{ systemPrompt: context.systemPrompt, messages },
+				undefined,
+				retryTemperature(attempt),
+			);
 			opts.onMessage?.(message);
-			ensureOk(message);
+			if (failedRetryable(message)) continue; // transient failure: retry the same prompt
 			const candidate = extractJsonObject(textOf(message));
 			if (candidate !== undefined && validator.Check(candidate)) {
 				return candidate as Static<S>;
@@ -197,9 +234,10 @@ export async function callRole<S extends TSchema>(
 		const message = await runComplete(
 			{ systemPrompt: context.systemPrompt, messages, tools: [tool] },
 			forcedToolChoice(toolName),
+			retryTemperature(attempt),
 		);
 		opts.onMessage?.(message);
-		ensureOk(message);
+		if (failedRetryable(message)) continue; // transient failure: retry the same prompt
 		const call = findToolCall(message, toolName);
 		if (call && validator.Check(call.arguments)) {
 			return call.arguments as Static<S>;
@@ -219,9 +257,15 @@ export async function callRole<S extends TSchema>(
 			timestamp: Date.now(),
 		},
 	];
-	const fallback = await runComplete({ systemPrompt: context.systemPrompt, messages: fallbackMessages });
+	const fallback = await runComplete(
+		{ systemPrompt: context.systemPrompt, messages: fallbackMessages },
+		undefined,
+		retryTemperature(maxReprompts + 1),
+	);
 	opts.onMessage?.(fallback);
-	ensureOk(fallback);
+	// failedRetryable still throws on a real cancellation; a transient failure here
+	// just falls through to the schema check below (and the final throw).
+	failedRetryable(fallback);
 	const candidate = extractJsonObject(textOf(fallback));
 	if (candidate !== undefined && validator.Check(candidate)) {
 		return candidate as Static<S>;
