@@ -211,12 +211,22 @@ export async function runPipeline(
 			await emit({ type: "gate_b", attempt, verdict: review.verdict, findingCount: review.findings.length });
 			turn({ role: "gate_b", attempt, verdict: review.verdict, findings: review.findings });
 			// Severity-based gate: pass when the reviewer approves OR when no finding
-			// is blocker/major. Remaining minor findings are recorded, not blocking —
-			// otherwise the deliberately-skeptical reviewer never converges.
+			// blocks. Acceptance is fail-closed on severity — only findings the reviewer
+			// EXPLICITLY labels minor are non-blocking (see isBlockingSeverity), so an
+			// unlabeled finding cannot silently downgrade to a pass. Accepted minor
+			// findings are recorded, not blocking — otherwise the deliberately-skeptical
+			// reviewer never converges.
 			if (review.verdict === "approve" || !hasBlockingFindings(review.findings)) {
 				await writeAccepted(runDir, review.findings);
 				approved = true;
 				break;
+			}
+
+			// A blocking finding remains. If this was the last allowed review round,
+			// escalate now: another revise pass would produce a diff no review round is
+			// left to grade, wasting the implementer's work.
+			if (attempt === config.caps.gateB) {
+				return await escalateAndHalt("gate B cap exceeded: review still requests changes", review.findings);
 			}
 
 			await enterPhase("revise", attempt);
@@ -244,9 +254,9 @@ export async function runPipeline(
 
 			const toAddress = [...classification.toFix, ...classification.stillOpen];
 			if (toAddress.length === 0) {
-				if (attempt === config.caps.gateB) {
-					return await escalateAndHalt("gate B cap exceeded with no actionable findings", review.findings);
-				}
+				// Nothing actionable this round (every finding defended or deferred); re-review
+				// the unchanged diff next round. Bounded by the cap check above, which
+				// escalates once the review rounds are exhausted.
 				continue;
 			}
 
@@ -288,11 +298,11 @@ export async function runPipeline(
 			if (!regression.passed) {
 				return await escalateAndHalt("revise broke Gate A and could not recover", toAddress);
 			}
-
-			if (attempt === config.caps.gateB) {
-				return await escalateAndHalt("gate B cap exceeded (unresolved findings)", review.findings);
-			}
+			// The next loop iteration re-reviews the revised diff; the cap check at the top
+			// of the loop bounds the total number of review rounds.
 		}
+		// Reachable only when caps.gateB is 0 (the loop never runs); a normal run either
+		// approves (break) or escalates from inside the loop.
 		if (!approved) {
 			return await escalateAndHalt("review not approved", []);
 		}

@@ -26,12 +26,30 @@ const REVIEWER_SYSTEM = [
 
 const REVIEW_DESCRIPTION = "the code review verdict and findings";
 
-/** Severities that block Gate B acceptance (case-insensitive; synonyms included). */
-const BLOCKING_SEVERITIES = new Set(["blocker", "critical", "major", "high"]);
+/**
+ * Severities the reviewer can use to mark a finding NON-blocking. Acceptance is
+ * fail-closed on severity: anything else — including a missing, empty, or
+ * unrecognized severity — blocks, so a local model that forgets (or fumbles) the
+ * label cannot silently downgrade a real problem to a pass. The reviewer must
+ * EXPLICITLY mark a finding minor for it not to block.
+ */
+const NON_BLOCKING_SEVERITIES = new Set([
+	"minor",
+	"low",
+	"nit",
+	"nitpick",
+	"info",
+	"informational",
+	"trivial",
+	"cosmetic",
+	"style",
+	"suggestion",
+]);
 
-/** A finding blocks acceptance only when its severity is blocker/major (or a synonym). */
+/** A finding blocks acceptance unless its severity is an explicit non-blocking label (fail-closed). */
 export function isBlockingSeverity(severity: string | undefined): boolean {
-	return severity !== undefined && BLOCKING_SEVERITIES.has(severity.trim().toLowerCase());
+	if (severity === undefined) return true;
+	return !NON_BLOCKING_SEVERITIES.has(severity.trim().toLowerCase());
 }
 
 /** Whether any finding is severe enough to block Gate B (drives the severity-based gate). */

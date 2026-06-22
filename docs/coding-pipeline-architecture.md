@@ -221,14 +221,15 @@ carries an optional `onEvent` (decision-event stream), `onEscalation` (halt noti
 
 `config.ts` provides `PipelineConfig` with these defaults:
 
-- **Endpoints** — Qwen `http://localhost:8081/v1` (context window 24576, per-turn cap 8192); Gemma
-  `http://localhost:8080/v1` (context window 131072, review cap 4096). The windows track the servers'
-  runtime context so context-budget math stays inside the real limit.
-- **Caps** — Gate A 4 rounds, Gate B 3 rounds (the revise loop is bounded by the Gate B cap). These
+- **Endpoints** — Qwen `http://localhost:8081/v1` (fallback context window 98304, per-turn cap 8192);
+  Gemma `http://localhost:8080/v1` (fallback context window 65536, review cap 4096). The context
+  windows are fallbacks only: `resolveServerContextWindows` overrides each from the live server
+  `n_ctx` at run start, so the budget math tracks however llama.cpp was launched.
+- **Caps** — Gate A 8 rounds, Gate B 3 rounds (the revise loop is bounded by the Gate B cap). These
   are starting values, intended to be tuned from decision-log data.
-- **Sandbox** — `none`: the disposable worktree plus the canonicalizing path gate. An optional `os`
-  mode wraps bash in an OS sandbox (darwin/linux) and, if used, makes the sandbox runtime a real
-  dependency of this package.
+- **Sandbox** — `none`: the disposable worktree plus the canonicalizing path gate. The config also
+  accepts an `os` value reserved for wrapping bash in an OS sandbox (darwin/linux), but that mode is
+  not yet wired; only `none` is implemented today (see §12).
 - **Implementer** — up to 30 turns per attempt; near-deterministic temperature.
 - **Command timeout** — 10 minutes per gate/smoke command.
 
@@ -251,8 +252,10 @@ pin sampling at the server, since the provider forwards only `temperature` and `
 
 - **Reviewer reliability** depends on the local model producing valid JSON; the reprompt loop and a
   bounded token budget make a bad response fail gracefully rather than stall or grow unbounded.
-- **Bash confinement** is best-effort (working directory plus the disposable worktree) unless the
-  optional OS sandbox is enabled.
+- **Bash confinement** is best-effort: file writes are contained by the disposable worktree, but bash
+  is not otherwise sandboxed today, so a command can still read outside the worktree and reach the
+  network. The `os` sandbox mode is reserved for closing this (darwin/linux) but is not yet wired; it
+  would add the sandbox runtime as a real dependency of this package.
 - **Vendored helpers** are frozen copies; a behavioral unit test guards the jail so a divergence is
   caught where it matters.
 - **Resume** is not implemented; each invocation is a fresh run (the journal-before-side-effect log

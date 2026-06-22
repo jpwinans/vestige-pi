@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-pipeline",
-	"version": "0.0.3",
+	"version": "0.79.8",
 	"private": true,
 	"description": "Local multi-model coding pipeline orchestrator (Phase 1: Qwen implements, Gemma reviews)",
 	"type": "module",
