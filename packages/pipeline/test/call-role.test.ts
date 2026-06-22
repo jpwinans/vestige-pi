@@ -137,6 +137,27 @@ describe("callRole", () => {
 		expect(temps[1]).toBeGreaterThan(0); // reprompt diverges
 	});
 
+	it("does NOT escalate temperature on forced-tool reprompts (local tool adherence drops with temperature)", async () => {
+		const reg = faux();
+		const temps: (number | undefined)[] = [];
+		reg.setResponses([
+			(_ctx, options) => {
+				temps.push(options?.temperature);
+				return fauxAssistantMessage([fauxToolCall("emit", { wrong: 1 })], { stopReason: "toolUse" });
+			},
+			(_ctx, options) => {
+				temps.push(options?.temperature);
+				return fauxAssistantMessage([fauxToolCall("emit", { answer: "fixed" })], { stopReason: "toolUse" });
+			},
+		]);
+		const result = await callRole(reg.getModel(), { messages: [userMessage] }, Schema, "emit", "desc", {
+			apiKey: "local",
+			temperature: 0, // forced-tool (default via) must hold this across every reprompt
+		});
+		expect(result.answer).toBe("fixed");
+		expect(temps).toEqual([0, 0]);
+	});
+
 	it("prompt-json mode parses a JSON object from the text (no tools)", async () => {
 		const reg = faux();
 		reg.setResponses([fauxAssistantMessage('here you go: {"answer":"json-mode"}')]);

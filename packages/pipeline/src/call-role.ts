@@ -141,13 +141,20 @@ export async function callRole<S extends TSchema>(
 	const maxTokens = opts.maxTokens ?? 1024;
 	const via = opts.structuredVia ?? "tool";
 
-	// Escalate temperature on reprompt so the retry budget actually explores
-	// different outputs. At a fixed low temperature (esp. 0) a local model's
-	// reprompt attempts are near-deterministic, so a diff that fails to produce
-	// schema-valid output once fails all attempts. The first attempt stays at the
-	// caller's temperature (deterministic when 0); later attempts ramp toward 1.
+	// The temperature schedule across reprompts is strategy-specific:
+	//
+	// - prompt-json: ESCALATE toward 1 on each reprompt. At a fixed low temperature
+	//   (esp. 0) a local model's reprompt attempts are near-deterministic, so output
+	//   that fails to validate once fails every attempt; ramping makes the retry
+	//   budget actually explore different completions. The first attempt stays at the
+	//   caller's temperature (deterministic when 0); later attempts ramp toward 1.
+	// - tool (forced OpenAI tool call): HOLD the caller's temperature on every
+	//   attempt. A local model's forced-tool adherence DROPS as temperature rises, so
+	//   escalating on reprompt — exactly when a clean tool call matters most — is
+	//   counterproductive. Classification therefore stays deterministic at temp 0.
 	const retryTemperature = (attempt: number): number | undefined => {
 		const base = opts.temperature;
+		if (via === "tool") return base;
 		if (base === undefined) return attempt === 0 ? undefined : Math.min(1, attempt * 0.5);
 		return Math.min(1, base + attempt * 0.5);
 	};
