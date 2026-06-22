@@ -16,18 +16,35 @@
 import { completeSimple, type Model } from "@earendil-works/pi-ai";
 import type { ModelEndpoint, PipelineConfig } from "./config.ts";
 
-export function buildLocalModel(provider: string, ep: ModelEndpoint): Model<"openai-completions"> {
+export interface BuildModelOptions {
+	/**
+	 * Suppress a harmony/thinking model's reasoning channel. Gemma (this build)
+	 * otherwise emits an unbounded `<|channel>thought` trace that loops and never
+	 * reaches the answer, so a structured-output review never completes. Setting
+	 * this makes the provider send `chat_template_kwargs.enable_thinking: false`
+	 * (the model's chat template honors it), so it emits the answer JSON directly.
+	 */
+	suppressThinking?: boolean;
+}
+
+export function buildLocalModel(
+	provider: string,
+	ep: ModelEndpoint,
+	opts: BuildModelOptions = {},
+): Model<"openai-completions"> {
 	return {
 		id: ep.id,
 		name: ep.id,
 		api: "openai-completions",
 		provider,
-		baseUrl: ep.baseUrl,
-		reasoning: false,
+		// reasoning:true only enables the thinkingFormat code path; with no
+		// reasoningEffort ever passed, enable_thinking resolves to false.
+		reasoning: opts.suppressThinking === true,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: ep.contextWindow,
 		maxTokens: ep.maxTokens,
+		baseUrl: ep.baseUrl,
 		compat: {
 			maxTokensField: "max_tokens",
 			supportsStore: false,
@@ -35,7 +52,57 @@ export function buildLocalModel(provider: string, ep: ModelEndpoint): Model<"ope
 			supportsReasoningEffort: false,
 			supportsDeveloperRole: false,
 			supportsLongCacheRetention: false,
+			...(opts.suppressThinking === true ? { thinkingFormat: "qwen-chat-template" as const } : {}),
 		},
+	};
+}
+
+/** The single field we read from a llama.cpp /props response. */
+interface LlamaServerProps {
+	default_generation_settings?: { n_ctx?: number };
+}
+
+/** Pick the live per-request context window from a /props body, else `fallback`. */
+export function deriveContextWindow(props: unknown, fallback: number): number {
+	const nCtx = (props as LlamaServerProps | null)?.default_generation_settings?.n_ctx;
+	return typeof nCtx === "number" && Number.isFinite(nCtx) && nCtx > 0 ? nCtx : fallback;
+}
+
+/**
+ * Query a llama.cpp server's /props for the real per-request context window
+ * (which the server fixes at `-c / -np`). Best-effort: any failure returns
+ * `fallback`, leaving a genuinely-down server for the health check to surface.
+ * /props lives at the server root, not under the OpenAI /v1 path.
+ */
+export async function fetchContextWindow(baseUrl: string, fallback: number, signal?: AbortSignal): Promise<number> {
+	const propsUrl = new URL("/props", baseUrl).toString();
+	try {
+		const res = await fetch(propsUrl, { signal });
+		if (!res.ok) return fallback;
+		return deriveContextWindow(await res.json(), fallback);
+	} catch {
+		return fallback;
+	}
+}
+
+/**
+ * Resolve each endpoint's contextWindow from its live server n_ctx so the client
+ * always matches however llama.cpp was launched, instead of a hardcoded guess
+ * that silently drifts. Per-endpoint best-effort: an unreachable server keeps
+ * the configured fallback.
+ */
+export async function resolveServerContextWindows(
+	config: PipelineConfig,
+	signal?: AbortSignal,
+): Promise<PipelineConfig> {
+	const [qwen, gemma] = await Promise.all([
+		fetchContextWindow(config.qwen.baseUrl, config.qwen.contextWindow, signal),
+		fetchContextWindow(config.gemma.baseUrl, config.gemma.contextWindow, signal),
+	]);
+	return {
+		...config,
+		qwen: { ...config.qwen, contextWindow: qwen },
+		gemma: { ...config.gemma, contextWindow: gemma },
 	};
 }
 
@@ -47,7 +114,9 @@ export interface RoleModels {
 export function buildRoleModels(config: PipelineConfig): RoleModels {
 	return {
 		qwen: buildLocalModel("qwen-local", config.qwen),
-		gemma: buildLocalModel("gemma-local", config.gemma),
+		// Gemma (reviewer) is a thinking model whose reasoning channel loops on a
+		// structured-output review; suppress it so it emits the verdict JSON directly.
+		gemma: buildLocalModel("gemma-local", config.gemma, { suppressThinking: true }),
 	};
 }
 
