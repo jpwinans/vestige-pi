@@ -5,7 +5,9 @@
  * lexical resolvePath alone would miss), then require containment.
  *
  * Bash is allowed but not path-checked — Phase 1 relies on the disposable
- * worktree, not command-string parsing, for bash confinement.
+ * worktree, not command-string parsing, for bash confinement. The gate also
+ * bounds bash execution time (a local model can run a runaway command such as the
+ * full `npm test` suite that never returns and stalls the whole pipeline).
  */
 
 import type { BeforeToolCallContext, BeforeToolCallResult } from "@earendil-works/pi-agent-core";
@@ -48,10 +50,26 @@ export function checkToolCall(toolName: string, input: Record<string, unknown>, 
 	return { block: false };
 }
 
-/** Adapt the policy to the Agent's beforeToolCall hook. */
-export function makeSafetyGate(worktree: string) {
+/** Default per-command bash timeout cap (seconds) when none is configured. */
+export const DEFAULT_BASH_TIMEOUT_SECONDS = 120;
+
+/** Bounded bash timeout (seconds): keep a smaller caller value, else use the cap. */
+export function clampBashTimeout(current: unknown, maxSeconds: number): number {
+	return typeof current === "number" && current > 0 && current <= maxSeconds ? current : maxSeconds;
+}
+
+/**
+ * Adapt the policy to the Agent's beforeToolCall hook. For bash, inject a bounded
+ * `timeout` (seconds) into the validated args by reference — the agent loop passes
+ * the same args object to the tool's execute (verified), and the bash tool honors
+ * `args.timeout` — so a command without (or with an excessive) timeout is capped.
+ */
+export function makeSafetyGate(worktree: string, maxBashSeconds: number = DEFAULT_BASH_TIMEOUT_SECONDS) {
 	return async (ctx: BeforeToolCallContext): Promise<BeforeToolCallResult | undefined> => {
 		const input = (ctx.args ?? {}) as Record<string, unknown>;
+		if (ctx.toolCall.name === "bash") {
+			input.timeout = clampBashTimeout(input.timeout, maxBashSeconds);
+		}
 		const decision = checkToolCall(ctx.toolCall.name, input, worktree);
 		return decision.block ? { block: true, reason: decision.reason } : undefined;
 	};
