@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { defaultConfig } from "./config.ts";
 import { runPipeline } from "./orchestrator.ts";
 import type { DecisionEvent } from "./schemas.ts";
+import { formatTurnForCli } from "./turn.ts";
 
 function formatEvent(event: DecisionEvent): string {
 	switch (event.type) {
@@ -51,7 +52,12 @@ async function main(): Promise<void> {
 	}
 	const planDir = resolve(process.cwd(), planArg);
 	const config = defaultConfig(process.cwd());
-	const result = await runPipeline(planDir, config, { onEvent: (event) => console.log(formatEvent(event)) });
+	// onEvent logs the FSM structure (phases, usage); onTurn adds the per-turn
+	// content (implementer text + tool calls, reviewer findings).
+	const result = await runPipeline(planDir, config, {
+		onEvent: (event) => console.log(formatEvent(event)),
+		onTurn: (turn) => console.log(formatTurnForCli(turn)),
+	});
 	console.log("");
 	console.log(`${result.status.toUpperCase()}: ${result.planSlug} (run ${result.runId})`);
 	if (result.reason) console.log(`Reason: ${result.reason}`);

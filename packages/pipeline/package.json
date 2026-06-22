@@ -30,6 +30,7 @@
 		"@earendil-works/pi-agent-core": "^0.79.8",
 		"@earendil-works/pi-ai": "^0.79.8",
 		"@earendil-works/pi-coding-agent": "^0.79.8",
+		"@earendil-works/pi-tui": "^0.79.8",
 		"typebox": "1.1.38"
 	},
 	"devDependencies": {
