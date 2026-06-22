@@ -57,6 +57,28 @@ export function hasBlockingFindings(findings: Finding[]): boolean {
 	return findings.some((finding) => isBlockingSeverity(finding.severity));
 }
 
+/** The orchestrator's decision for one Gate B review round. */
+export type GateBDecision = "accept" | "escalate_cap" | "revise";
+
+/**
+ * Decide what to do after one Gate B review round. Pure so the loop's control flow
+ * is unit-testable without driving the whole pipeline:
+ * - accept: the reviewer approved, or no finding blocks (fail-closed on severity).
+ * - escalate_cap: a blocking finding remains on the LAST allowed review round, so a
+ *   further revise pass would produce a diff no review round is left to grade.
+ * - revise: a blocking finding remains and at least one review round is left to
+ *   grade the result.
+ */
+export function gateBRoundDecision(
+	verdict: "approve" | "request_changes",
+	findings: Finding[],
+	attempt: number,
+	cap: number,
+): GateBDecision {
+	if (verdict === "approve" || !hasBlockingFindings(findings)) return "accept";
+	return attempt >= cap ? "escalate_cap" : "revise";
+}
+
 export interface GateBOptions {
 	apiKey: string;
 	signal?: AbortSignal;

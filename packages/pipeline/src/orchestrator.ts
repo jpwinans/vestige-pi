@@ -15,7 +15,7 @@ import type { PipelineConfig } from "./config.ts";
 import { DecisionLog, renderSummary } from "./decision-log.ts";
 import { notifyEscalation } from "./escalate.ts";
 import { redCheck, runGateA, runSmoke } from "./gate-a.ts";
-import { hasBlockingFindings, runGateB } from "./gate-b.ts";
+import { gateBRoundDecision, runGateB } from "./gate-b.ts";
 import { runImplementer } from "./implementer.ts";
 import { buildRoleModels, healthCheck, resolveServerContextWindows } from "./models.ts";
 import { loadPlan } from "./plan-loader.ts";
@@ -210,22 +210,18 @@ export async function runPipeline(
 			});
 			await emit({ type: "gate_b", attempt, verdict: review.verdict, findingCount: review.findings.length });
 			turn({ role: "gate_b", attempt, verdict: review.verdict, findings: review.findings });
-			// Severity-based gate: pass when the reviewer approves OR when no finding
-			// blocks. Acceptance is fail-closed on severity — only findings the reviewer
-			// EXPLICITLY labels minor are non-blocking (see isBlockingSeverity), so an
-			// unlabeled finding cannot silently downgrade to a pass. Accepted minor
-			// findings are recorded, not blocking — otherwise the deliberately-skeptical
-			// reviewer never converges.
-			if (review.verdict === "approve" || !hasBlockingFindings(review.findings)) {
+			// Severity-based gate (fail-closed on severity; see gateBRoundDecision):
+			// accept on approve or no blocking finding; escalate when a blocking finding
+			// remains on the last allowed round (a further revise could never be reviewed);
+			// otherwise revise. Accepted minor findings are recorded, not blocking —
+			// otherwise the deliberately-skeptical reviewer never converges.
+			const decision = gateBRoundDecision(review.verdict, review.findings, attempt, config.caps.gateB);
+			if (decision === "accept") {
 				await writeAccepted(runDir, review.findings);
 				approved = true;
 				break;
 			}
-
-			// A blocking finding remains. If this was the last allowed review round,
-			// escalate now: another revise pass would produce a diff no review round is
-			// left to grade, wasting the implementer's work.
-			if (attempt === config.caps.gateB) {
+			if (decision === "escalate_cap") {
 				return await escalateAndHalt("gate B cap exceeded: review still requests changes", review.findings);
 			}
 
