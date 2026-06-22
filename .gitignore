@@ -16,7 +16,9 @@ packages/*/dist-firefox/
 .vscode/
 .zed/
 .idea/
-.claude/
+# Ignore local Claude Code state, but track shared skills.
+.claude/*
+!.claude/skills/
 *.swp
 *.swo
 *~
@@ -38,4 +40,6 @@ todo.md
 plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
+.pi/pipeline-runs/
+.pi/pipeline-worktrees/
 collect.sh

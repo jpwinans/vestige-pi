@@ -1,0 +1,44 @@
+{
+	"name": "@earendil-works/pi-pipeline",
+	"version": "0.79.8",
+	"private": true,
+	"description": "Local multi-model coding pipeline orchestrator (Phase 1: Qwen implements, Gemma reviews)",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./extension": {
+			"types": "./dist/extension.d.ts",
+			"import": "./dist/extension.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "^0.79.8",
+		"@earendil-works/pi-ai": "^0.79.8",
+		"@earendil-works/pi-coding-agent": "^0.79.8",
+		"@earendil-works/pi-tui": "^0.79.8",
+		"typebox": "1.1.38"
+	},
+	"devDependencies": {
+		"@types/node": "24.12.4",
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
