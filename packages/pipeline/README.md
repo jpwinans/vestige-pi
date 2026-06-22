@@ -9,9 +9,13 @@ local-only — two OpenAI-compatible endpoints, no cloud model.
   worktree by a `beforeToolCall` jail.
 - **Reviewer** — Gemma (local, `http://localhost:8080/v1`) reviews the non-testable
   layer against the plan's rubric via a prompt-json structured output (no tools —
-  Gemma has no OpenAI tool interface).
+  Gemma has no OpenAI tool interface). Its reasoning channel is suppressed so it
+  returns the verdict directly.
 - **Gate A** — tests/lint/typecheck run via `execCommand`; the verdict is a process
-  exit code, never a model claim.
+  exit code, never a model claim. A regression introduced during revise gets the
+  same bounded repair loop.
+- **Gate B** — passes when the reviewer approves or when no finding is blocker/major
+  severity; accepted minor and deferred findings are recorded as run artifacts.
 - **Planning** is human-authored: the plan (spec + rubric + failing tests) is passed
   to the pipeline as a directory.
 - **Escalation** halts the run and notifies the operator (there is no automated
@@ -37,7 +41,9 @@ A plan directory contains `plan.json` (commands), `spec.md`, `rubric.md`, and `t
 plan -> red_check -> implement -> gate_a -> gate_b -> revise -> escalate -> done
 ```
 
-Caps: Gate A 4 rounds, Gate B 3 rounds (revise is bounded by the Gate B cap). Every
-event is journaled to `decision-log.jsonl` in the run directory.
+Caps: Gate A 8 rounds, Gate B 3 rounds (revise is bounded by the Gate B cap). Every
+event is journaled to `decision-log.jsonl` in the run directory, and each completed
+role-point also renders as a native transcript entry in the TUI (a stdout line in
+the CLI).
 
 See `docs/coding-pipeline-architecture.md` for the full design.
