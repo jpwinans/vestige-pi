@@ -15,14 +15,15 @@ import type { PipelineConfig } from "./config.ts";
 import { DecisionLog, renderSummary } from "./decision-log.ts";
 import { notifyEscalation } from "./escalate.ts";
 import { redCheck, runGateA, runSmoke } from "./gate-a.ts";
-import { runGateB } from "./gate-b.ts";
+import { hasBlockingFindings, runGateB } from "./gate-b.ts";
 import { runImplementer } from "./implementer.ts";
-import { buildRoleModels, healthCheck } from "./models.ts";
+import { buildRoleModels, healthCheck, resolveServerContextWindows } from "./models.ts";
 import { loadPlan } from "./plan-loader.ts";
-import { classifyFindings, writeDeferred } from "./revise.ts";
+import { classifyFindings, writeAccepted, writeDeferred } from "./revise.ts";
 import { makeSafetyGate } from "./safety-gate.ts";
 import type { DecisionEvent, Finding, Phase, Plan } from "./schemas.ts";
-import type { PipelineHooks, RunResult } from "./types.ts";
+import { describeImplementerTurn } from "./turn.ts";
+import type { PipelineHooks, PipelineTurn, RunResult } from "./types.ts";
 import {
 	createWorktree,
 	getDiff,
@@ -38,15 +39,12 @@ function generateRunId(slug: string): string {
 
 function buildImplementPrompt(plan: Plan): string {
 	const testList = plan.tests.map((t) => `- ${t.path}`).join("\n");
-	return [
-		"# Spec",
-		plan.spec,
-		"",
-		"# Failing tests to make pass (do not edit them)",
-		testList,
-		"",
-		"Implement the change so these tests pass. Run them with the project's test command as you go.",
-	].join("\n");
+	const runLine = plan.commands.test
+		? `Run the tests with EXACTLY this command (do NOT run the whole test suite, e.g. a bare \`npm test\`): ${plan.commands.test}`
+		: "Implement the change so these tests pass.";
+	return ["# Spec", plan.spec, "", "# Failing tests to make pass (do not edit them)", testList, "", runLine].join(
+		"\n",
+	);
 }
 
 function buildRepairPrompt(plan: Plan, failureSummary: string): string {
@@ -114,6 +112,12 @@ export async function runPipeline(
 		});
 	};
 
+	// Surface a completed role-turn for live presentation (TUI / CLI). Additive to
+	// the decision log; never journaled.
+	const turn = (t: PipelineTurn): void => {
+		hooks.onTurn?.(t);
+	};
+
 	const escalateAndHalt = async (reason: string, openFindings: Finding[]): Promise<RunResult> => {
 		await enterPhase("escalate", 1);
 		await notifyEscalation(
@@ -121,17 +125,27 @@ export async function runPipeline(
 			hooks,
 		);
 		await emit({ type: "escalate", reason });
+		turn({ role: "escalate", reason });
 		return { status: "failed", runId, planSlug: plan.slug, runDir, smokePassed: false, reason };
 	};
 
 	await writeFile(join(runDir, "spec.md"), plan.spec, "utf-8");
 	await writeFile(join(runDir, "rubric.md"), plan.rubric.map((c) => `- ${c}`).join("\n"), "utf-8");
 
-	const models = buildRoleModels(config);
 	let worktree: Worktree | undefined;
 
 	try {
 		await emit({ type: "run_start", runId, planSlug: plan.slug });
+		// Match each model's contextWindow to its live server n_ctx before use.
+		const models = buildRoleModels(await resolveServerContextWindows(config, hooks.signal));
+		// Per-call-site implementer hook: usage accounting + a rendered turn. phase
+		// and attempt are captured here since onMessage only sees the message.
+		const implementerTurns =
+			(phase: Phase, attempt: number) =>
+			(message: AssistantMessage): void => {
+				usageSink("implementer", models.qwen.id)(message);
+				turn({ role: "implementer", phase, attempt, ...describeImplementerTurn(message) });
+			};
 		await healthCheck(
 			[
 				{ label: "qwen (implementer)", model: models.qwen, apiKey: config.qwen.apiKey },
@@ -142,13 +156,14 @@ export async function runPipeline(
 
 		await pruneStaleWorktrees(config.repoRoot, hooks.signal);
 		worktree = await createWorktree(config.repoRoot, config.worktreesDir, runId, config.baseRef, hooks.signal);
-		const safetyGate = makeSafetyGate(worktree.path);
+		const safetyGate = makeSafetyGate(worktree.path, Math.floor(config.implementerBashTimeoutMs / 1000));
 
 		// Stage 0 (Phase 1): plan is human-authored. Write tests and prove they fail red.
 		await enterPhase("red_check", 1);
 		await writePlanTests(worktree.path, plan.tests);
 		const red = await redCheck(plan, worktree.path, config.commandTimeoutMs, hooks.signal);
 		await emit({ type: "red_check", passed: red.passed, exitCode: red.exitCode });
+		turn({ role: "red_check", passed: red.passed });
 		if (!red.passed) {
 			return await escalateAndHalt("red-check failed: tests pass against the base tree (vacuous plan)", []);
 		}
@@ -163,8 +178,9 @@ export async function runPipeline(
 				apiKey: config.qwen.apiKey,
 				maxTurns: config.implementerMaxTurns,
 				beforeToolCall: safetyGate,
-				onMessage: usageSink("implementer", models.qwen.id),
+				onMessage: implementerTurns("implement", attempt),
 				signal: hooks.signal,
+				compaction: config.compaction,
 			});
 			await emit({ type: "implement", attempt, stopReason: impl.stopReason });
 
@@ -172,6 +188,7 @@ export async function runPipeline(
 			const gateA = await runGateA(plan, worktree.path, config.commandTimeoutMs, hooks.signal);
 			gateASummary = gateA.summary;
 			await emit({ type: "gate_a", attempt, passed: gateA.passed, summary: gateA.summary });
+			turn({ role: "gate_a", attempt, passed: gateA.passed, summary: gateA.summary });
 			if (gateA.passed) {
 				gateAPassed = true;
 				break;
@@ -192,7 +209,12 @@ export async function runPipeline(
 				onMessage: usageSink("reviewer", models.gemma.id),
 			});
 			await emit({ type: "gate_b", attempt, verdict: review.verdict, findingCount: review.findings.length });
-			if (review.verdict === "approve") {
+			turn({ role: "gate_b", attempt, verdict: review.verdict, findings: review.findings });
+			// Severity-based gate: pass when the reviewer approves OR when no finding
+			// is blocker/major. Remaining minor findings are recorded, not blocking —
+			// otherwise the deliberately-skeptical reviewer never converges.
+			if (review.verdict === "approve" || !hasBlockingFindings(review.findings)) {
+				await writeAccepted(runDir, review.findings);
 				approved = true;
 				break;
 			}
@@ -212,6 +234,13 @@ export async function runPipeline(
 				defended: classification.defended,
 				deferred: classification.deferred.length,
 			});
+			turn({
+				role: "revise",
+				attempt,
+				fixed: classification.toFix.length,
+				defended: classification.defended,
+				deferred: classification.deferred.length,
+			});
 
 			const toAddress = [...classification.toFix, ...classification.stillOpen];
 			if (toAddress.length === 0) {
@@ -225,17 +254,39 @@ export async function runPipeline(
 				apiKey: config.qwen.apiKey,
 				maxTurns: config.implementerMaxTurns,
 				beforeToolCall: safetyGate,
-				onMessage: usageSink("implementer", models.qwen.id),
+				onMessage: implementerTurns("revise", attempt),
 				signal: hooks.signal,
+				compaction: config.compaction,
 			});
 			await emit({ type: "implement", attempt, stopReason: impl.stopReason });
 
-			// Regression: a fix must not break Gate A.
+			// Regression: the fix must leave Gate A green. A local model often
+			// introduces a transient break while addressing findings, so allow it
+			// the same bounded repair loop the initial Gate A gets (re-prompt with
+			// the failure summary) before escalating — escalation is the fallback,
+			// not the first response.
 			await enterPhase("gate_a", attempt);
-			const regression = await runGateA(plan, worktree.path, config.commandTimeoutMs, hooks.signal);
+			let regression = await runGateA(plan, worktree.path, config.commandTimeoutMs, hooks.signal);
 			await emit({ type: "gate_a", attempt, passed: regression.passed, summary: regression.summary });
+			turn({ role: "gate_a", attempt, passed: regression.passed, summary: regression.summary });
+			for (let repair = 1; !regression.passed && repair <= config.caps.gateA; repair++) {
+				await enterPhase("implement", attempt);
+				const fix = await runImplementer(models.qwen, worktree.path, buildRepairPrompt(plan, regression.summary), {
+					apiKey: config.qwen.apiKey,
+					maxTurns: config.implementerMaxTurns,
+					beforeToolCall: safetyGate,
+					onMessage: implementerTurns("implement", attempt),
+					signal: hooks.signal,
+					compaction: config.compaction,
+				});
+				await emit({ type: "implement", attempt, stopReason: fix.stopReason });
+				await enterPhase("gate_a", attempt);
+				regression = await runGateA(plan, worktree.path, config.commandTimeoutMs, hooks.signal);
+				await emit({ type: "gate_a", attempt, passed: regression.passed, summary: regression.summary });
+				turn({ role: "gate_a", attempt, passed: regression.passed, summary: regression.summary });
+			}
 			if (!regression.passed) {
-				return await escalateAndHalt("revise broke Gate A", toAddress);
+				return await escalateAndHalt("revise broke Gate A and could not recover", toAddress);
 			}
 
 			if (attempt === config.caps.gateB) {
@@ -249,6 +300,7 @@ export async function runPipeline(
 		// Definition of Done: live-smoke through the real surface.
 		const smoke = await runSmoke(plan, worktree.path, config.commandTimeoutMs, hooks.signal);
 		await emit({ type: "done", smokePassed: smoke.passed });
+		turn({ role: "done", passed: smoke.passed });
 		if (!smoke.passed) {
 			return {
 				status: "failed",
